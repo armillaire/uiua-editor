@@ -4,29 +4,107 @@
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 
-struct termios original_termios; /* this prolly shouldn't be global */
+#define CTRL_KEY(k) ((k) & 0x1f)
+
+struct EditorConfig {
+    int screen_rows, screen_cols;
+    struct termios original_termios;
+};
+
+struct EditorConfig E;
+
+void die(const char *s);
+void disable_raw_mode();
+void editor_draw_fringe();
+void editor_process_keypress();
+char editor_read_key();
+void editor_refresh_screen();
+void enable_raw_mode();
+int get_window_size(int *rows, int *cols);
+void init_editor();
+
+int
+main() {
+    enable_raw_mode();
+    init_editor();
+
+    while (1) {
+        editor_refresh_screen();
+        editor_process_keypress();
+    }
+
+    return 0;
+
+}
 
 void
 die(const char *s) {
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
     perror(s);
     exit(1);
 }
 
 void
 disable_raw_mode() {
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios) == -1)
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.original_termios) == -1)
         die("tcsetattr");
+}
+
+/* prints the fringe of ~ on the edges */
+void editor_draw_fringe() {
+    for (int i = 0; i < E.screen_cols; i++) {
+        write(STDOUT_FILENO, "~\r\n", 3);
+    }
+}
+
+void
+editor_process_keypress() {
+    char c = editor_read_key();
+
+    switch (c) {
+        case CTRL_KEY('q'):
+            write(STDOUT_FILENO, "\x1b[2J", 4);
+            write(STDOUT_FILENO, "\x1b[H", 3);
+            
+            exit(0);
+            break;
+    }
+}
+
+char
+editor_read_key() {
+    int nread;
+    char c;
+    while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+        if (nread == -1 && errno != EAGAIN)
+            die("read");
+    }
+
+    return c;
+}
+
+void
+editor_refresh_screen() {
+    write(STDOUT_FILENO, "\x1b[2J", 4);
+    write(STDOUT_FILENO, "\x1b[H", 3);
+
+    editor_draw_fringe();
+
+    write(STDOUT_FILENO, "\x1b[H", 3);
 }
 
 void
 enable_raw_mode() {
-    if (tcgetattr(STDIN_FILENO, &original_termios) == -1)
+    if (tcgetattr(STDIN_FILENO, &E.original_termios) == -1)
         die("tcgetattr");
 
     atexit(disable_raw_mode);
 
-    struct termios raw = original_termios;
+    struct termios raw = E.original_termios;
     raw.c_iflag &= ~(  BRKINT /* disabling break conditions becoming SIGINT */
                      | ICRNL  /* disabling CR -> NL */
                      | INPCK  /* disabling parity checking */
@@ -50,23 +128,20 @@ enable_raw_mode() {
 }
 
 int
-main() {
-    enable_raw_mode();
+get_window_size(int *rows, int *cols) {
+    struct winsize ws;
 
-    while (1) {
-        char c = '\0';
-        if (read(STDIN_FILENO, &c, 1) == -1 && errno != EAGAIN)
-            die("read");
-
-        if (iscntrl(c)) {
-            printf("%d\r\n", c);
-        } else {
-            printf("%d ('%c')\r\n", c, c);
-        }
-
-        if (c == 'q')
-            break;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        return -1;
+    } else {
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+        return 0;
     }
+}
 
-    return 0;
+void
+init_editor() {
+    if (get_window_size(&E.screen_rows, &E.screen_cols) == -1)
+        die("get_window_size");
 }
