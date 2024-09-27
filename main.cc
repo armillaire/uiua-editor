@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -12,6 +13,34 @@
 struct EditorConfig {
     int screen_rows, screen_cols;
     struct termios original_termios;
+};
+
+/* TODO move this to another file */
+struct a_buf {
+    char *raw;
+    int len;
+
+    a_buf() : raw(NULL), len(0) {}
+
+    ~a_buf() {
+        this->free();
+    }
+
+    void append(const char *s, int len) {
+        /* TODO find which c++ converter goes here */
+        char *n_raw = (char *)realloc(this->raw, this->len + len);
+
+        if (n_raw == NULL)
+            return;
+
+        memcpy(&n_raw[this->len], s, len);
+        this->raw = n_raw;
+        this->len += len;
+    }
+
+    void free() {
+        ::free(this->raw);
+    }
 };
 
 struct EditorConfig E;
@@ -58,8 +87,12 @@ disable_raw_mode() {
 
 /* prints the fringe of ~ on the edges */
 void editor_draw_fringe() {
-    for (int i = 0; i < E.screen_cols; i++) {
-        write(STDOUT_FILENO, "~\r\n", 3);
+    for (int i = 0; i < E.screen_rows; i++) {
+        write(STDOUT_FILENO, "~", 1);
+
+        if (i < E.screen_rows - 1) {
+            write(STDOUT_FILENO, "\r\n", 2);
+        }
     }
 }
 
